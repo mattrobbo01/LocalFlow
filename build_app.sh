@@ -6,8 +6,11 @@ cd "$(dirname "$0")"
 
 swift build -c release
 
-APP=LocalFlow.app
-rm -rf "$APP"
+# Assemble in a dot-prefixed staging dir: Finder stamps FinderInfo onto
+# visible bundles while the folder is open in a window, which codesign
+# rejects as detritus. Hidden folders are left alone.
+APP=.staging/LocalFlow.app
+rm -rf .staging LocalFlow.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp .build/release/LocalFlow "$APP/Contents/MacOS/LocalFlow"
@@ -69,4 +72,5 @@ fi
 # Install the freshly built app into /Applications (same signature + bundle
 # ID, so TCC grants carry over).
 ditto "$APP" /Applications/LocalFlow.app
-echo "Built $APP and installed to /Applications/LocalFlow.app"
+rm -rf .staging
+echo "Built and installed to /Applications/LocalFlow.app"

@@ -3,3 +3,4 @@
 LocalFlow.app/
 AppIcon.iconset/
 .DS_Store
+.staging/
