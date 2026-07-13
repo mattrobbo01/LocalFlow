@@ -53,11 +53,17 @@ PLIST
 xattr -cr "$APP"
 
 IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' 'NR==1 && /"/{print $2}')
+SIGN_ID="${IDENTITY:--}"
+
+# Finder re-stamps FinderInfo on the bundle while it's open in a window,
+# which codesign rejects as detritus — strip-and-sign with one retry.
+if ! codesign --force --deep --sign "$SIGN_ID" "$APP" 2>/dev/null; then
+    xattr -cr "$APP"
+    codesign --force --deep --sign "$SIGN_ID" "$APP"
+fi
 if [[ -n "${IDENTITY:-}" ]]; then
-    codesign --force --deep --sign "$IDENTITY" "$APP"
     echo "Signed with identity: $IDENTITY"
 else
-    codesign --force --deep --sign - "$APP"
     echo "Signed ad-hoc (permissions will reset on each rebuild)"
 fi
 # Install the freshly built app into /Applications (same signature + bundle
