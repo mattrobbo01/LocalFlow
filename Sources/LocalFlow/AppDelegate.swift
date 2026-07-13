@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dictionaryWindow = DictionaryWindowController()
     private let autoLearner = AutoLearner()
     private var isEnrolling = false
+    private var lastDictation: String?
 
     private var engineState: TranscriptionEngine.State = .idle
     private var lastLatency: Double?
@@ -85,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onRecordStart = { [weak self] handsFree in self?.recordStarted(handsFree: handsFree) }
         monitor.onRecordEnd = { [weak self] in self?.recordEnded() }
         monitor.onRecordCancel = { [weak self] in self?.recordCancelled() }
+        monitor.onPasteLast = { [weak self] in self?.pasteLastDictation() }
 
         if monitor.start() {
             hotkeyMonitor = monitor
@@ -184,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.logger.info("transcribed \(result.text.count) chars in \(Int(result.processingTime * 1000)) ms")
                 let text = await formatter.format(result.text)
                 if !text.isEmpty {
+                    self.lastDictation = text
                     TextInjector.inject(text)
                     self.playSound("Bottle")
                     self.recordHistory(text: text, duration: duration)
@@ -291,6 +294,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         autoLearnItem.state = settings.autoLearnEnabled ? .on : .off
         menu.addItem(autoLearnItem)
 
+        let pasteLastItem = NSMenuItem(
+            title: "Paste Last Dictation (⌃⌘V)",
+            action: #selector(pasteLastFromMenu), keyEquivalent: "")
+        pasteLastItem.target = self
+        menu.addItem(pasteLastItem)
+
         let historyItem = NSMenuItem(
             title: "Open Dictation History…",
             action: #selector(openHistory), keyEquivalent: "")
@@ -373,6 +382,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.refreshMenu()
             }
         }
+    }
+
+    /// ⌃⌘V or menu: re-insert the most recent dictation at the cursor —
+    /// the rescue for dictating with no text field focused.
+    private func pasteLastDictation() {
+        if lastDictation == nil {
+            lastDictation = Self.lastHistoryEntry()
+        }
+        guard let text = lastDictation else {
+            overlay.show(.message("No dictation yet"))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.overlay.hide() }
+            return
+        }
+        logger.info("pasting last dictation (\(text.count) chars)")
+        TextInjector.inject(text)
+        playSound("Bottle")
+    }
+
+    /// Most recent dictation from history.jsonl — survives app restarts.
+    private static func lastHistoryEntry() -> String? {
+        guard let data = try? String(contentsOf: Settings.historyURL, encoding: .utf8) else { return nil }
+        guard let line = data.split(separator: "\n").last(where: { !$0.isEmpty }),
+              let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+              let text = json["text"] as? String
+        else { return nil }
+        return text
+    }
+
+    @objc private func pasteLastFromMenu() {
+        pasteLastDictation()
     }
 
     /// Apply corrections the auto-learner harvested.

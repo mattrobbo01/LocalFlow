@@ -29,6 +29,8 @@ final class HotkeyMonitor {
     /// Fired when another key is pressed mid-hold (e.g. fn+Delete): the hold
     /// was a shortcut chord, not dictation, so the recording is cancelled.
     var onRecordCancel: (() -> Void)?
+    /// ⌃⌘V — paste the most recent dictation wherever the cursor is.
+    var onPasteLast: (() -> Void)?
 
     private enum Mode {
         case idle
@@ -172,6 +174,15 @@ final class HotkeyMonitor {
         }
 
         if type == .keyDown {
+            // ⌃⌘V (keycode 9 = V): paste the last dictation.
+            let flags = event.flags
+            if event.getIntegerValueField(.keyboardEventKeycode) == 9,
+               flags.contains(.maskCommand), flags.contains(.maskControl),
+               !flags.contains(.maskAlternate), !flags.contains(.maskShift) {
+                logger.info("paste-last shortcut")
+                DispatchQueue.main.async { self.onPasteLast?() }
+                return
+            }
             // A real key while the hotkey is held means a shortcut chord
             // (fn+arrow, fn+delete…) — abandon the dictation hold. Typing
             // during a hands-free session is allowed and ignored.

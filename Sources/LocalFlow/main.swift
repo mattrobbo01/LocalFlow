@@ -51,6 +51,15 @@ if let flagIndex = CommandLine.arguments.firstIndex(of: "--diff-test"),
     exit(0)
 }
 
+// Test hook: `LocalFlow --format-test "<raw text>"` runs the rule-based
+// formatting pass and prints the result.
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--format-test"),
+   CommandLine.arguments.count > flagIndex + 1 {
+    let formatter = TextFormatter(dictionary: PersonalDictionary(), settings: Settings())
+    print(formatter.rulePass(CommandLine.arguments[flagIndex + 1]))
+    exit(0)
+}
+
 // Normal launch: background menu-bar app (no Dock icon).
 MainActor.assumeIsolated {
     let app = NSApplication.shared
