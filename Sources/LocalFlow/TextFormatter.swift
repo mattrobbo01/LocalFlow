@@ -53,8 +53,9 @@ struct TextFormatter {
         return text
     }
 
-    /// Real 1–3 letter English words — protected from the fragment rule.
-    private static let commonShortWords: Set<String> = [
+    /// Real 1–3 letter English words — protected from the fragment rule and
+    /// barred from auto-learning.
+    static let commonShortWords: Set<String> = [
         "a", "i", "an", "as", "at", "be", "by", "do", "go", "he", "hi", "if",
         "in", "is", "it", "me", "my", "no", "of", "oh", "ok", "on", "or", "so",
         "to", "up", "us", "we", "am", "ah", "act", "add", "age", "ago", "aid",
@@ -162,13 +163,18 @@ enum OllamaPolisher {
 
         1. DELETE words that do not belong:
            - filler words (um, uh, er, hmm)
-           - false starts, stutters, and partial word fragments (e.g. "co coffee" → "coffee")
+           - false starts, stutters, and partial word fragments — including \
+        when the fragment is itself a word: "set settled in" → "settled in", \
+        "we we should" → "we should", "co coffee" → "coffee"
            - self-corrections, keeping the speaker's corrected version
            - fragments of background speech (TV, other people) that don't fit the dictation
         2. FIX punctuation and capitalization: sentence breaks, commas, \
            question marks, apostrophes, capital letters, paragraph breaks.
-        3. FIX articles the transcriber misheard: "a"/"an"/"the" may be \
-           swapped for each other when grammar clearly requires it.
+        3. FIX small words the transcriber misheard — ONLY these swaps, ONLY \
+           when the sentence is ungrammatical without the fix: \
+           a↔an↔the, this↔that, than↔then. \
+           Example: "a prompt this I just dictated" → "a prompt that I just dictated". \
+           NEVER touch one of these words when it is already correct.
 
         You must NEVER change, add, replace, or reorder the speaker's words. \
         Every remaining word must appear exactly as dictated, in the original \
@@ -200,26 +206,73 @@ enum OllamaPolisher {
         return cleaned
     }
 
-    /// Guardrail: the polish pass may only *remove* words. If the model's
-    /// output contains words that weren't dictated, it rephrased — discard
-    /// its answer and keep the rule-based text.
-    private static func isDeleteOnly(original: String, polished: String) -> Bool {
+    /// ASR confusion groups: the polish pass may swap words *within* a group
+    /// (transcriber mishearings), never across groups or beyond them.
+    private static let confusionGroups: [Set<String>] = [
+        ["a", "an", "the"],
+        ["this", "that"],
+        ["than", "then"],
+    ]
+
+    private static func sameGroup(_ a: String, _ b: String) -> Bool {
+        confusionGroups.contains { $0.contains(a) && $0.contains(b) }
+    }
+
+    /// Guardrail: validate the model's output edit-by-edit against an
+    /// alignment with the original. Legal edits: deletions (anywhere) and
+    /// 1-for-1 swaps within a confusion group. ANY other introduced word
+    /// means it rephrased — discard its answer and keep the rule-based text.
+    static func isDeleteOnly(original: String, polished: String) -> Bool {
         func words(_ s: String) -> [String] {
             s.lowercased()
                 .components(separatedBy: CharacterSet.alphanumerics.inverted)
                 .filter { !$0.isEmpty }
         }
-        let originalWords = Set(words(original))
-        let polishedWords = words(polished)
-        guard !polishedWords.isEmpty else { return false }
+        let a = words(original)
+        let b = words(polished)
+        guard !b.isEmpty else { return false }
 
-        // Articles are exempt: swapping a/an/the is a permitted grammar fix
-        // (ASR mishears them constantly), not a rephrase.
-        let articles: Set<String> = ["a", "an", "the"]
-        let invented = polishedWords.filter {
-            !originalWords.contains($0) && !articles.contains($0)
+        let anchors = lcsPairs(a, b)
+        var prevA = -1, prevB = -1
+        for (i, j) in anchors + [(a.count, b.count)] {
+            let removed = (prevA + 1)..<i
+            let introduced = (prevB + 1)..<j
+            if !introduced.isEmpty {
+                // Only a single-word, same-confusion-group substitution may
+                // introduce a word the user didn't say.
+                guard introduced.count == 1, removed.count == 1,
+                      sameGroup(a[removed.lowerBound], b[introduced.lowerBound])
+                else { return false }
+            }
+            prevA = i
+            prevB = j
         }
-        // Tolerate a word or two of drift (punctuation-driven splits), no more.
-        return invented.count <= max(1, polishedWords.count / 50)
+        return true
+    }
+
+    /// Longest common subsequence over word arrays; returns matched pairs.
+    private static func lcsPairs(_ a: [String], _ b: [String]) -> [(Int, Int)] {
+        let n = a.count, m = b.count
+        guard n > 0, m > 0 else { return [] }
+        var dp = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
+        for i in stride(from: n - 1, through: 0, by: -1) {
+            for j in stride(from: m - 1, through: 0, by: -1) {
+                dp[i][j] = a[i] == b[j] ? dp[i + 1][j + 1] + 1 : max(dp[i + 1][j], dp[i][j + 1])
+            }
+        }
+        var pairs: [(Int, Int)] = []
+        var i = 0, j = 0
+        while i < n, j < m {
+            if a[i] == b[j] {
+                pairs.append((i, j))
+                i += 1
+                j += 1
+            } else if dp[i + 1][j] >= dp[i][j + 1] {
+                i += 1
+            } else {
+                j += 1
+            }
+        }
+        return pairs
     }
 }

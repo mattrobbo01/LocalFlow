@@ -60,6 +60,32 @@ if let flagIndex = CommandLine.arguments.firstIndex(of: "--format-test"),
     exit(0)
 }
 
+// Test hook: `LocalFlow --polish-test "<raw text>"` runs the FULL formatting
+// pass (rules + Ollama polish + guardrail) with the user's real settings.
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--polish-test"),
+   CommandLine.arguments.count > flagIndex + 1 {
+    let input = CommandLine.arguments[flagIndex + 1]
+    let semaphore = DispatchSemaphore(value: 0)
+    Task {
+        let formatter = TextFormatter(dictionary: PersonalDictionary.load(), settings: Settings.load())
+        print(await formatter.format(input))
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(0)
+}
+
+// Test hook: `LocalFlow --guard-test "<original>" "<polished>"` prints the
+// guardrail verdict.
+if let flagIndex = CommandLine.arguments.firstIndex(of: "--guard-test"),
+   CommandLine.arguments.count > flagIndex + 2 {
+    let verdict = OllamaPolisher.isDeleteOnly(
+        original: CommandLine.arguments[flagIndex + 1],
+        polished: CommandLine.arguments[flagIndex + 2])
+    print(verdict ? "ACCEPT" : "REJECT")
+    exit(0)
+}
+
 // Normal launch: background menu-bar app (no Dock icon).
 MainActor.assumeIsolated {
     let app = NSApplication.shared

@@ -195,17 +195,55 @@ final class AutoLearner {
         return Array(learned.prefix(3))
     }
 
+    /// Grammar words that must NEVER become dictionary rules — a one-off
+    /// edit ("this"→"the" in one sentence) would otherwise rewrite every
+    /// future dictation globally.
+    nonisolated private static let neverLearn: Set<String> = [
+        "this", "that", "than", "then", "these", "those", "there", "their",
+        "they", "them", "your", "you're", "its", "it's", "were", "we're",
+        "where", "have", "has", "had", "will", "would", "could", "should",
+    ]
+
     nonisolated private static func isLearnable(spoken: String, written: String) -> Bool {
-        guard spoken.lowercased() != written.lowercased() else {
-            // Pure case correction ("habits" → "Habits") — always learnable.
-            return spoken != written
+        let spokenLower = spoken.lowercased()
+        let writtenLower = written.lowercased()
+
+        // Grammar/function/common-short words are context edits, never vocabulary.
+        if neverLearn.contains(spokenLower) || neverLearn.contains(writtenLower) { return false }
+        if TextFormatter.commonShortWords.contains(spokenLower) { return false }
+
+        if spokenLower == writtenLower {
+            // Case-only corrections: learn capitalizations ("habits"→"Habits"),
+            // never downgrades ("Take"→"take" — that's sentence context).
+            guard spoken != written,
+                  written.first?.isUppercase == true,
+                  spoken.first?.isLowercase == true
+            else { return false }
+            return true
         }
         guard spoken.count >= 3, written.count >= 2 else { return false }
         // Words must be recognizably similar — a spelling/jargon fix, not a
         // different word choice.
-        let distance = levenshtein(spoken.lowercased(), written.lowercased())
+        let distance = levenshtein(spokenLower, writtenLower)
         let maxLength = max(spoken.count, written.count)
-        return Double(distance) / Double(maxLength) <= 0.5
+        guard Double(distance) / Double(maxLength) <= 0.5 else { return false }
+        // If both sides are ordinary lowercase English words ("drafts"→"draft",
+        // "thing"→"saying"), the user edited meaning, not vocabulary. Jargon,
+        // names, and brands (unknown or capitalized words) remain learnable.
+        if written == writtenLower, isRealEnglishWord(spokenLower), isRealEnglishWord(writtenLower) {
+            return false
+        }
+        return true
+    }
+
+    /// Spell-checker lookup — call sites all run on the main thread.
+    nonisolated private static func isRealEnglishWord(_ word: String) -> Bool {
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated {
+            let checker = NSSpellChecker.shared
+            let range = checker.checkSpelling(of: word, startingAt: 0)
+            return range.location == NSNotFound
+        }
     }
 
     nonisolated private static func words(_ text: String) -> [String] {

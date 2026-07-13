@@ -62,11 +62,20 @@ final class DictionaryStore: ObservableObject {
         return PersonalDictionary(replacements: dict)
     }
 
-    /// Add a learned correction (skips duplicates). Returns true if added.
+    /// Add a learned correction (skips duplicates and anything that would
+    /// form a rewrite cycle with an existing entry). Returns true if added.
     @discardableResult
     func learn(spoken: String, written: String) -> Bool {
         let spokenKey = spoken.lowercased()
+        let writtenKey = written.lowercased()
         guard !entries.contains(where: { $0.spoken.lowercased() == spokenKey }) else { return false }
+        // Reject A→B when B→A (or B→anything) already exists: replacements
+        // chain and cycle ("thing"→"saying" + "saying"→"thing" = coin flip).
+        guard !entries.contains(where: { $0.spoken.lowercased() == writtenKey }),
+              !entries.contains(where: {
+                  $0.written.lowercased() == spokenKey && $0.spoken.lowercased() == writtenKey
+              })
+        else { return false }
         entries.append(Entry(spoken: spoken, written: written))
         entries.sort { $0.spoken.localizedCaseInsensitiveCompare($1.spoken) == .orderedAscending }
         return true
